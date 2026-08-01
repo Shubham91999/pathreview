@@ -73,7 +73,7 @@ class ReviewGenerator:
             max_tokens=self.config.max_tokens,
         )
 
-        content = response.choices[0].message.content
+        content = response.choices[0].message.content or ""
 
         # Parse output
         sections = parse_review_output(content)
@@ -110,7 +110,7 @@ class ReviewGenerator:
                 temperature=self.config.temperature,
                 max_tokens=self.config.max_tokens,
             )
-            retry_content = retry_response.choices[0].message.content
+            retry_content = retry_response.choices[0].message.content or ""
             retry_sections = parse_review_output(retry_content)
             if retry_sections:
                 section = retry_sections[0]
