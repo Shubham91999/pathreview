@@ -1,3 +1,65 @@
+## Week 10 — Iteration & reflection
+
+### Reviewer feedback
+
+**Feedback received:** [ ] Yes  [x] No — still awaiting review
+
+**Summary of feedback:**
+No review came in. PR [#185](https://github.com/ascherj/pathreview/pull/185) has been open since 2026-07-18 and currently has zero review comments and zero inline comments from maintainers. Per the Summer 2026 course note, reviewer feedback is not part of this term's flow, so this is expected rather than a stalled PR.
+
+**How you responded:**
+No maintainer response required. I did do a second self-review pass in the meantime and left one known issue standing rather than silently patching it — see the reflection below on the hardcoded classifier model.
+
+---
+
+### Reflection
+
+**What was harder than you expected?**
+
+Getting `make check` to pass was harder than writing the feature. The project README treats `make check && make test-unit` as the PR gate, but `main` already carries 178 lint/type errors, so a clean run was never achievable — I spent real time convinced I had broken something before realizing the baseline was already red. The workable answer was to scope checks to only the files I touched and prove I introduced nothing new, which is a very different (and less satisfying) standard than "the suite is green."
+
+That baseline also forced scope creep I didn't plan for. `mypy --strict` wouldn't clear my own module until I fixed an unannotated `sections = []` in `rag/generator/output_parser.py` — a file the issue had nothing to do with. Separately, the OpenAI type stubs type `response.choices[0].message.content` as `str | None`, which broke strict mode in `review_generator.py` and needed its own commit (`575e51d`) with `or ""` guards. Neither of those is interesting work, and neither was visible from the issue text.
+
+The other surprise was testing something whose whole purpose is calling an LLM. I had no clean way to assert on a real model's judgment, which is what pushed `ToneChecker` into a dual-mode design: `_llm_check()` for production and a regex `_heuristic_check()` fallback so the 16 unit tests run with no API key at all. That design came out of the testing constraint, not from the plan.
+
+**What did you learn about working in a large codebase?**
+
+Finding *where* the code goes took longer than writing it. The functional change in `generate_section()` is roughly 40 lines, but deciding on that insertion point meant ruling out the obvious-looking home first: `safety/content_filter.py` already existed and superficially fit, but it's a blocking filter for genuinely harmful content, and tone is advisory — the right behavior is regenerate-and-continue, not reject. Same-shaped code, wrong semantics. In my own projects I'd have just added it to the existing filter and moved on.
+
+I also had to check that `rag/generator/review_generator.py` was allowed to import from `safety/` at all. The documented data flow (API → Ingestion → Agent → RAG → Safety) says yes and confirms it doesn't create a cycle — but that's the kind of thing you have to go verify in someone else's repo, where in your own you already know.
+
+The biggest shift was realizing that some choices are product decisions wearing code clothes. `_llm_check()` fails *open* — a classifier timeout returns `is_constructive=True` and the section ships unchecked. In a project I owned I'd probably raise and let it crash. Here, silently degrading one section is clearly better than a flaky secondary call taking down an entire review, and I can't unilaterally make that call for a codebase whose users I've never met. I documented it in PLAN.md's risks section instead of pretending it was obvious.
+
+And conventions turned out to be enforced infrastructure, not style preferences: Conventional Commits, black at line-length 100, Google-style docstrings required on every public function. Following them is what let me keep a 685-line diff legible.
+
+**How did AI tools help — and where did they fall short?**
+
+Most useful for orientation and mechanical volume. Navigating seven packages to find the insertion point, generating docstring scaffolding to convention, structuring the mock-client tests, and translating mypy's stub errors into concrete fixes — all of that was significantly faster with assistance than without.
+
+Where it fell short was judgment and correctness-under-scrutiny. It could not answer the actual design questions: retry once or N times, fail open or closed, does tone classification belong in `safety/` or `rag/`. Those needed reading the codebase's own conventions and making a defensible call.
+
+More concretely, the regex patterns in `_heuristic_check()` looked authoritative and are genuinely weak. They match on a fixed word list, so `"Your work shows a lack of depth"` sails through with no match, while the bare word `"bad"` fires even in a legitimate context. My own tests surfaced that gap; the generated code did not flag it. That's the failure mode I'd warn people about — plausible-looking code that reads as finished.
+
+The clearest example is one I left in on purpose. `_llm_check()` hardcodes `model="openai/gpt-4o-mini"` instead of using `self.config.model` ([tone_checker.py:86](safety/tone_checker.py#L86)). It's locally correct, so nothing complains, and I flagged it myself in the Week 8 journal as something to align — then shipped without doing it. Small, real, invisible to tooling, and exactly the class of thing a human reviewer catches in ten seconds.
+
+**What would you do differently if you started over?**
+
+Check the health of `main` before writing a line. Knowing up front that `make check` was already failing on 178 errors would have saved me the hours I spent assuming the breakage was mine.
+
+Comment on the issue with actual questions, not just a claim. I claimed #69 and then disappeared into implementation. One question on the thread — *should tone failures block or degrade, and does this belong in `safety/`?* — could have replaced a week of guessing, and would have given the maintainer context before a 685-line PR landed unannounced.
+
+Reproduce first, genuinely. Week 8 was reproduction week, but my commit order gives me away: `562f396 feat(safety)` lands *before* `49d0b83 test(safety): add reproduction tests`. I built the fix and backfilled the tests that document the bug. They're good tests, but writing them first would have shaped the interface rather than ratifying it.
+
+Keep formatting out of the functional diff. `review_generator.py` shows 106 changed lines and only about 40 do anything — the rest is black reformatting swept up incidentally. A reviewer now has to hunt for the real change. A separate `style:` commit would have made the PR far cheaper to review, which matters more than I appreciated at the time.
+
+And I'd fix the hardcoded model instead of listing it as an open question twice.
+
+**What are you most proud of?**
+
+The reproduction tests in `tests/unit/test_tone_checker_reproduction.py`. Not the feature — the five tests that pin down the gap as it existed *before* the fix, showing dismissive and vague feedback passing through the pipeline untouched. They make the case for the PR readable without opening the issue, and if someone strips the tone check out later, those tests fail loudly and explain exactly what was lost. It's the piece of the contribution most likely to still be doing useful work in a year.
+
+---
+
 ## Week 9 — Solution building & PR submission
 
 ### Check-in 1 (mid-week)
